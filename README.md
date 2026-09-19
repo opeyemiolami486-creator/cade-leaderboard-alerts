@@ -29,8 +29,28 @@ Cade currently returns `period: "24h"`, so “daily” follows Cade’s live 24-
 - `/alerts` enables alerts for the chat and immediately sends a snapshot.
 - `/stop` or `/alertsoff` disables alerts for the chat.
 - `/status` reports alert state, polling interval, and the three-hour speed window.
+- `/copyplan 1000` analyzes the current top-10 traders' settled prediction history from the previous four days and returns the most profitable tracked trader's recent trades plus a manual sizing plan for a 1000-unit available balance.
 
 The service only sends another message when the ranked top-10 snapshot changes, avoiding duplicate Telegram spam every 15 seconds.
+
+## Four-day copy-trade advisory
+
+The `/copyplan <available_balance>` command uses Cade's read-only endpoint:
+
+```text
+GET /api/users/{wallet}/prediction-history?limit=100&cursor=...
+```
+
+It follows pagination, filters to the previous four days, excludes unresolved trades, and ranks the current top-10 leaderboard traders by realized profit (`credit_payout_raw - net_stake_raw`). It then shows the winning trader's recent trades and proposes a conservative default of `1%` of the available balance per copied trade, with a `10%` combined exposure cap.
+
+These are configurable Railway variables:
+
+```text
+COPY_TRADE_PCT=1
+MAX_TOTAL_COPY_PCT=10
+```
+
+The service does **not** connect to a wallet, request private keys, submit transactions, or execute copy trading. The output is an unsubmitted manual advisory. Enter the balance in the same units you use when deciding your Cade stake; the percentage calculation is `balance × COPY_TRADE_PCT / 100`. Historical profitability is not a guarantee of future results.
 
 ## Railway environment variables
 
@@ -44,6 +64,8 @@ Set these in **Railway → your service → Variables**:
 | `CADE_LEADERBOARD_URL` | No | `https://cade.market/api/leaderboard?period=day` | Cade endpoint; leave default unless it changes |
 | `RESET_HOUR_UTC` | No | `0` | Countdown reset hour in UTC; `0` means midnight UTC |
 | `REQUEST_TIMEOUT_SECONDS` | No | `10` | HTTP timeout for Cade and Telegram requests |
+| `COPY_TRADE_PCT` | No | `1` | Suggested percentage of available balance per copied trade; clamped to 0.1–5% |
+| `MAX_TOTAL_COPY_PCT` | No | `10` | Maximum combined copy exposure; clamped to 1–25% |
 | `ALERT_CHAT_IDS` | No | blank | Optional comma-separated Telegram chat IDs to start enabled after boot |
 | `LOG_LEVEL` | No | `INFO` | Logging level |
 

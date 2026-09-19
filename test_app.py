@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app import SpeedTracker, countdown, format_message, normalize, snapshot_key
+from app import SpeedTracker, build_copy_plan, countdown, format_message, normalize, snapshot_key
 
 
 def test_normalize_sorts_by_predictions_not_source_rank():
@@ -55,3 +55,31 @@ def test_snapshot_key_is_stable_and_changes_on_prediction_count():
     two = [{"username": "alpha", "wallet": "w", "predictions": 2}]
     assert snapshot_key(one) == snapshot_key(one)
     assert snapshot_key(one) != snapshot_key(two)
+
+
+def test_copy_plan_selects_highest_four_day_realized_profit_and_sizes_manually():
+    now = datetime(2026, 9, 19, 12, 0, tzinfo=timezone.utc)
+    rows = [
+        {"rank": 1, "username": "alpha", "wallet": "a", "predictions": 20},
+        {"rank": 2, "username": "beta", "wallet": "b", "predictions": 10},
+    ]
+    histories = {
+        "a": [{"created_at": "2026-09-18T12:00:00Z", "lifecycle_state": "resolved", "credit_payout_raw": "150", "net_stake_raw": "100"}],
+        "b": [{"created_at": "2026-09-18T12:00:00Z", "lifecycle_state": "resolved", "credit_payout_raw": "300", "net_stake_raw": "100"}],
+    }
+    plan = build_copy_plan(rows, histories, 1000, now)
+    assert plan["winner"]["row"]["username"] == "beta"
+    assert plan["per_trade_amount"] == pytest.approx(10)
+    assert plan["max_total_amount"] == pytest.approx(100)
+
+
+def test_copy_plan_excludes_old_and_unresolved_trades():
+    now = datetime(2026, 9, 19, 12, 0, tzinfo=timezone.utc)
+    rows = [{"rank": 1, "username": "alpha", "wallet": "a", "predictions": 20}]
+    histories = {"a": [
+        {"created_at": "2026-09-10T12:00:00Z", "lifecycle_state": "resolved", "credit_payout_raw": "999", "net_stake_raw": "0"},
+        {"created_at": "2026-09-19T11:00:00Z", "lifecycle_state": "open", "credit_payout_raw": "999", "net_stake_raw": "0"},
+    ]}
+    plan = build_copy_plan(rows, histories, 1000, now)
+    assert plan["winner"]["profit_raw"] == 0
+    assert len(plan["winner"]["settled"]) == 0

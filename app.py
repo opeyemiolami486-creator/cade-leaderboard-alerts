@@ -21,6 +21,9 @@ TOP_N = max(1, min(10, int(os.getenv("TOP_N", "10"))))
 RESET_HOUR_UTC = int(os.getenv("RESET_HOUR_UTC", "0")) % 24
 REQUEST_TIMEOUT = float(os.getenv("REQUEST_TIMEOUT_SECONDS", "10"))
 SPEED_WINDOW_HOURS = 3.0
+COPY_LOOKBACK_DAYS = 4
+COPY_TRADE_PCT = max(0.1, min(5.0, float(os.getenv("COPY_TRADE_PCT", "1"))))
+MAX_TOTAL_COPY_PCT = max(COPY_TRADE_PCT, min(25.0, float(os.getenv("MAX_TOTAL_COPY_PCT", "10"))))
 
 
 def countdown(now: datetime | None = None) -> str:
@@ -93,6 +96,50 @@ def snapshot_key(rows: list[dict[str, Any]]) -> str:
     return json.dumps([(r["username"], r["wallet"], r["predictions"]) for r in rows], separators=(",", ":"))
 
 
+def parse_timestamp(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
+def realized_profit(prediction: dict[str, Any]) -> int:
+    """Return realized profit in Cade's smallest credit units; unresolved trades are zero."""
+    if prediction.get("lifecycle_state") not in {"settled", "resolved"}:
+        return 0
+    try:
+        return int(prediction.get("credit_payout_raw") or 0) - int(prediction.get("net_stake_raw") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def build_copy_plan(rows: list[dict[str, Any]], histories: dict[str, list[dict[str, Any]]], balance: float, now: datetime | None = None) -> dict[str, Any]:
+    now = now or datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=COPY_LOOKBACK_DAYS)
+    candidates = []
+    for row in rows:
+        trades = [t for t in histories.get(row["wallet"], []) if (ts := parse_timestamp(t.get("created_at"))) and ts >= cutoff]
+        settled = [t for t in trades if t.get("lifecycle_state") in {"settled", "resolved"}]
+        profit = sum(realized_profit(t) for t in settled)
+        candidates.append({"row": row, "trades": trades, "settled": settled, "profit_raw": profit})
+    candidates.sort(key=lambda x: (-x["profit_raw"], -len(x["settled"]), x["row"]["username"].lower()))
+    winner = candidates[0] if candidates else None
+    per_trade = balance * COPY_TRADE_PCT / 100
+    max_total = balance * MAX_TOTAL_COPY_PCT / 100
+    plan = {
+        "balance": balance,
+        "copy_trade_pct": COPY_TRADE_PCT,
+        "max_total_copy_pct": MAX_TOTAL_COPY_PCT,
+        "per_trade_amount": per_trade,
+        "max_total_amount": max_total,
+        "winner": winner,
+        "as_of": now,
+    }
+    return plan
+
+
 def format_message(rows: list[dict[str, Any]], now: datetime | None = None) -> str:
     generated = (now or datetime.now(timezone.utc)).strftime("%Y-%m-%d %H:%M:%S UTC")
     lines = ["📊 <b>Cade top traders — predictions</b>", f"24h window • checked {generated}", "Trades/hour = speed measured from samples in the previous 3 hours.", f"Next daily reset in <b>{countdown(now)}</b>", ""]
@@ -100,6 +147,36 @@ def format_message(rows: list[dict[str, Any]], now: datetime | None = None) -> s
         name = row["username"].replace("<", "&lt;").replace(">", "&gt;")
         speed = row.get("trades_per_hour", 0.0)
         lines.append(f"<b>{row['rank']}.</b> {name} — <b>{row['predictions']}</b> predictions — <b>{speed:.2f}/hr</b>")
+    return "\n".join(lines)
+
+
+def format_copy_plan(plan: dict[str, Any]) -> str:
+    winner = plan.get("winner")
+    if not winner:
+        return "No four-day copy plan is available yet."
+    row = winner["row"]
+    name = row["username"].replace("<", "&lt;").replace(">", "&gt;")
+    profit = winner["profit_raw"]
+    lines = [
+        "<b>Manual copy-trade advisory — Cade</b>",
+        f"Most profitable tracked trader: <b>{name}</b>",
+        f"Realized profit, last {COPY_LOOKBACK_DAYS} days: <b>{profit:,} Cade raw units</b>",
+        f"Settled trades analyzed: {len(winner['settled'])}",
+        "",
+        f"Suggested size: <b>{plan['copy_trade_pct']:.2f}%</b> of available balance per copied trade",
+        f"For balance {plan['balance']:.2f}: <b>{plan['per_trade_amount']:.2f}</b> credits per trade",
+        f"Maximum combined copy exposure: <b>{plan['max_total_copy_pct']:.2f}%</b> = <b>{plan['max_total_amount']:.2f}</b> credits",
+        "",
+        "This is an unsubmitted manual plan. The bot does not connect to a wallet or place trades.",
+        "The trader is selected from the current top-10 leaderboard; this is not a guarantee of future profit.",
+        "",
+        "<b>Recent trades to review:</b>",
+    ]
+    for trade in sorted(winner["trades"], key=lambda t: t.get("created_at", ""), reverse=True)[:10]:
+        title = str(trade.get("market_title") or trade.get("description") or "Unnamed market").replace("<", "&lt;").replace(">", "&gt;")
+        side = str(trade.get("side") or "unknown").upper()
+        stake = int(trade.get("net_stake_raw") or 0)
+        lines.append(f"• {side} — {stake:,} Cade raw units — {title[:100]}")
     return "\n".join(lines)
 
 
@@ -118,6 +195,25 @@ class CadeClient:
         response = await self.client.get(CADE_URL)
         response.raise_for_status()
         return normalize(response.json())
+
+    async def prediction_history(self, wallet: str) -> list[dict[str, Any]]:
+        predictions = []
+        cursor = None
+        for _ in range(20):
+            params: dict[str, Any] = {"limit": 100}
+            if cursor:
+                params["cursor"] = cursor
+            response = await self.client.get(f"https://cade.market/api/users/{wallet}/prediction-history", params=params)
+            response.raise_for_status()
+            body = response.json()
+            batch = body.get("predictions")
+            if not isinstance(batch, list):
+                raise ValueError(f"Cade history response has no predictions array for {wallet}")
+            predictions.extend(batch)
+            if not body.get("has_more") or not body.get("next_cursor"):
+                break
+            cursor = body["next_cursor"]
+        return predictions
 
 
 class TelegramClient:
@@ -177,6 +273,25 @@ async def run_bot() -> None:
                         rows = speed_tracker.update(await cade.leaderboard())
                         state.last_key[chat_id] = snapshot_key(rows)
                         await telegram.send(chat_id, format_message(rows))
+                    elif command == "/copyplan":
+                        parts = (message.get("text") or "").strip().split()
+                        if len(parts) != 2:
+                            await telegram.send(chat_id, "Usage: /copyplan 1000\nReplace 1000 with your available balance in Cade credits.")
+                            continue
+                        try:
+                            balance = float(parts[1])
+                            if balance <= 0:
+                                raise ValueError
+                        except ValueError:
+                            await telegram.send(chat_id, "Balance must be a positive number. Example: /copyplan 1000")
+                            continue
+                        rows = await cade.leaderboard()
+                        history_batches = await asyncio.gather(*(cade.prediction_history(row["wallet"]) for row in rows), return_exceptions=True)
+                        histories = {row["wallet"]: batch for row, batch in zip(rows, history_batches) if isinstance(batch, list)}
+                        if len(histories) != len(rows):
+                            log.warning("copyplan history incomplete: %s/%s wallets", len(histories), len(rows))
+                        plan = build_copy_plan(rows, histories, balance)
+                        await telegram.send(chat_id, format_copy_plan(plan))
                     elif command in ("/stop", "/alertsoff"):
                         state.alerts[chat_id] = False
                         await telegram.send(chat_id, "Alerts are off. Send /alerts to turn them on again.")
