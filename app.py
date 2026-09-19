@@ -26,6 +26,7 @@ COPY_TRADE_PCT = max(0.1, min(5.0, float(os.getenv("COPY_TRADE_PCT", "1"))))
 MAX_TOTAL_COPY_PCT = max(COPY_TRADE_PCT, min(25.0, float(os.getenv("MAX_TOTAL_COPY_PCT", "10"))))
 COPY_RANKING = os.getenv("COPY_RANKING", "roi").lower()
 MIN_COPY_SETTLED_TRADES = max(1, int(os.getenv("MIN_COPY_SETTLED_TRADES", "10")))
+MIN_COPY_ROI_PCT = max(0.0, float(os.getenv("MIN_COPY_ROI_PCT", "1000")))
 
 
 def countdown(now: datetime | None = None) -> str:
@@ -117,7 +118,7 @@ def realized_profit(prediction: dict[str, Any]) -> int:
         return 0
 
 
-def build_copy_plan(rows: list[dict[str, Any]], histories: dict[str, list[dict[str, Any]]], balance: float, now: datetime | None = None, min_settled_trades: int = MIN_COPY_SETTLED_TRADES) -> dict[str, Any]:
+def build_copy_plan(rows: list[dict[str, Any]], histories: dict[str, list[dict[str, Any]]], balance: float, now: datetime | None = None, min_settled_trades: int = MIN_COPY_SETTLED_TRADES, min_roi_pct: float = MIN_COPY_ROI_PCT) -> dict[str, Any]:
     now = now or datetime.now(timezone.utc)
     cutoff = now - timedelta(days=COPY_LOOKBACK_DAYS)
     candidates = []
@@ -130,12 +131,17 @@ def build_copy_plan(rows: list[dict[str, Any]], histories: dict[str, list[dict[s
         stake = sum(int(t.get("net_stake_raw") or 0) for t in candidate["settled"])
         candidate["stake_raw"] = stake
         candidate["roi_pct"] = (100 * candidate["profit_raw"] / stake) if stake else None
-    eligible = [x for x in candidates if len(x["settled"]) >= min_settled_trades and x["roi_pct"] is not None]
+    eligible = [
+        x for x in candidates
+        if len(x["settled"]) >= min_settled_trades
+        and x["roi_pct"] is not None
+        and x["roi_pct"] >= min_roi_pct
+    ]
     if COPY_RANKING == "profit":
         eligible.sort(key=lambda x: (-x["profit_raw"], -len(x["settled"]), x["row"]["username"].lower()))
     else:
         eligible.sort(key=lambda x: (-x["roi_pct"], -len(x["settled"]), -x["profit_raw"], x["row"]["username"].lower()))
-    candidates = eligible or candidates
+    candidates = eligible
     winner = candidates[0] if candidates else None
     per_trade = balance * COPY_TRADE_PCT / 100
     max_total = balance * MAX_TOTAL_COPY_PCT / 100
@@ -147,6 +153,7 @@ def build_copy_plan(rows: list[dict[str, Any]], histories: dict[str, list[dict[s
         "max_total_amount": max_total,
         "ranking": COPY_RANKING,
         "minimum_settled_trades": min_settled_trades,
+        "minimum_roi_pct": min_roi_pct,
         "winner": winner,
         "as_of": now,
     }
@@ -166,7 +173,11 @@ def format_message(rows: list[dict[str, Any]], now: datetime | None = None) -> s
 def format_copy_plan(plan: dict[str, Any]) -> str:
     winner = plan.get("winner")
     if not winner:
-        return "No four-day copy plan is available yet."
+        return (
+            f"No trader currently meets the copy filter: at least {MIN_COPY_ROI_PCT:.0f}% realized ROI "
+            f"over {COPY_LOOKBACK_DAYS} days and the minimum settled-trade sample.\n"
+            "No weaker trader will be recommended automatically."
+        )
     row = winner["row"]
     name = row["username"].replace("<", "&lt;").replace(">", "&gt;")
     profit = winner["profit_raw"]
@@ -174,7 +185,7 @@ def format_copy_plan(plan: dict[str, Any]) -> str:
         "<b>Manual copy-trade advisory — Cade</b>",
         f"Most profitable tracked trader: <b>{name}</b>",
         f"Realized profit, last {COPY_LOOKBACK_DAYS} days: <b>{profit:,} Cade raw units</b>",
-        f"ROI: <b>{winner.get('roi_pct', 0):.2f}%</b> • ranking: <b>{plan['ranking']}</b> • minimum sample: {plan['minimum_settled_trades']} settled trades",
+        f"ROI: <b>{winner.get('roi_pct', 0):.2f}%</b> • required: <b>{plan['minimum_roi_pct']:.0f}%+</b> • minimum sample: {plan['minimum_settled_trades']} settled trades",
         f"Settled trades analyzed: {len(winner['settled'])}",
         "",
         f"Suggested size: <b>{plan['copy_trade_pct']:.2f}%</b> of available balance per copied trade",

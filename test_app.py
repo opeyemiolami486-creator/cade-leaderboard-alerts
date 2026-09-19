@@ -67,7 +67,7 @@ def test_copy_plan_selects_highest_four_day_realized_profit_and_sizes_manually()
         "a": [{"created_at": "2026-09-18T12:00:00Z", "lifecycle_state": "resolved", "credit_payout_raw": "150", "net_stake_raw": "100"}],
         "b": [{"created_at": "2026-09-18T12:00:00Z", "lifecycle_state": "resolved", "credit_payout_raw": "300", "net_stake_raw": "100"}],
     }
-    plan = build_copy_plan(rows, histories, 1000, now, min_settled_trades=1)
+    plan = build_copy_plan(rows, histories, 1000, now, min_settled_trades=1, min_roi_pct=0)
     assert plan["winner"]["row"]["username"] == "beta"
     assert plan["per_trade_amount"] == pytest.approx(10)
     assert plan["max_total_amount"] == pytest.approx(100)
@@ -80,6 +80,13 @@ def test_copy_plan_excludes_old_and_unresolved_trades():
         {"created_at": "2026-09-10T12:00:00Z", "lifecycle_state": "resolved", "credit_payout_raw": "999", "net_stake_raw": "0"},
         {"created_at": "2026-09-19T11:00:00Z", "lifecycle_state": "open", "credit_payout_raw": "999", "net_stake_raw": "0"},
     ]}
-    plan = build_copy_plan(rows, histories, 1000, now)
-    assert plan["winner"]["profit_raw"] == 0
-    assert len(plan["winner"]["settled"]) == 0
+    plan = build_copy_plan(rows, histories, 1000, now, min_roi_pct=0)
+    assert plan["winner"] is None
+
+
+def test_copy_plan_does_not_fallback_below_roi_threshold():
+    now = datetime(2026, 9, 19, 12, 0, tzinfo=timezone.utc)
+    rows = [{"rank": 1, "username": "alpha", "wallet": "a", "predictions": 20}]
+    histories = {"a": [{"created_at": "2026-09-18T12:00:00Z", "lifecycle_state": "resolved", "credit_payout_raw": "110", "net_stake_raw": "100"}]}
+    plan = build_copy_plan(rows, histories, 1000, now, min_settled_trades=1, min_roi_pct=1000)
+    assert plan["winner"] is None

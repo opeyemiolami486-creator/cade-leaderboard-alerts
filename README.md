@@ -41,7 +41,7 @@ The `/copyplan <available_balance>` command uses Cade's read-only endpoint:
 GET /api/users/{wallet}/prediction-history?limit=100&cursor=...
 ```
 
-It follows pagination, filters to the previous four days, excludes unresolved trades, and ranks the current top-10 leaderboard traders by **ROI** (`realized profit / settled stake`). By default, a trader must have at least 10 settled trades to qualify; this prevents a single lucky trade from dominating the recommendation. It then shows the winning trader's recent trades and proposes a conservative default of `1%` of the available balance per copied trade, with a `10%` combined exposure cap.
+It follows pagination, filters to the previous four days, excludes unresolved trades, and ranks the current top-10 leaderboard traders by **ROI** (`realized profit / settled stake`). By default, a trader must have at least 10 settled trades and at least **1,000% realized ROI** to qualify. If nobody meets both conditions, the bot returns no recommendation rather than falling back to a weaker trader. It then shows the winning trader's recent trades and proposes a conservative default of `1%` of the available balance per copied trade, with a `10%` combined exposure cap.
 
 These are configurable Railway variables:
 
@@ -50,6 +50,7 @@ COPY_TRADE_PCT=1
 MAX_TOTAL_COPY_PCT=10
 COPY_RANKING=roi
 MIN_COPY_SETTLED_TRADES=10
+MIN_COPY_ROI_PCT=1000
 ```
 
 The service does **not** connect to a wallet, request private keys, submit transactions, or execute copy trading. The output is an unsubmitted manual advisory. Enter the balance in the same units you use when deciding your Cade stake; the percentage calculation is `balance × COPY_TRADE_PCT / 100`. Historical profitability is not a guarantee of future results.
@@ -70,6 +71,7 @@ Set these in **Railway → your service → Variables**:
 | `MAX_TOTAL_COPY_PCT` | No | `10` | Maximum combined copy exposure; clamped to 1–25% |
 | `COPY_RANKING` | No | `roi` | Use `roi` to prefer low-stake/high-return traders, or `profit` for absolute profit |
 | `MIN_COPY_SETTLED_TRADES` | No | `10` | Minimum four-day settled trades required before a trader qualifies |
+| `MIN_COPY_ROI_PCT` | No | `1000` | Hard minimum realized ROI percentage; no recommendation is returned below this threshold |
 | `ALERT_CHAT_IDS` | No | blank | Optional comma-separated Telegram chat IDs to start enabled after boot |
 | `LOG_LEVEL` | No | `INFO` | Logging level |
 
