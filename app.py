@@ -25,7 +25,7 @@ RESET_HOUR_UTC = int(os.getenv("RESET_HOUR_UTC", "0")) % 24
 REQUEST_TIMEOUT = float(os.getenv("REQUEST_TIMEOUT_SECONDS", "20"))
 TELEGRAM_POLL_SECONDS = 20
 TELEGRAM_READ_TIMEOUT_SECONDS = 35
-SPEED_WINDOW_HOURS = 3.0
+SPEED_WINDOW_HOURS = 1.0
 COPY_LOOKBACK_DAYS = 4
 COPY_TRADE_PCT = max(0.1, min(5.0, float(os.getenv("COPY_TRADE_PCT", "1"))))
 MAX_TOTAL_COPY_PCT = max(COPY_TRADE_PCT, min(25.0, float(os.getenv("MAX_TOTAL_COPY_PCT", "10"))))
@@ -85,14 +85,18 @@ def leaderboard_url(url: str = CADE_URL) -> str:
 
 
 class SpeedTracker:
-    """Calculate each trader's prediction speed from samples collected in the last 3 hours."""
+    """Calculate exact counts for the most recently completed UTC clock hour."""
 
-    def __init__(self, window_hours: float = SPEED_WINDOW_HOURS):
+    def __init__(self, window_hours: float = 4.0):
         self.window = timedelta(hours=window_hours)
         self.samples: dict[str, deque[tuple[datetime, int]]] = defaultdict(deque)
+        self.hour_anchors: dict[str, dict[datetime, int]] = defaultdict(dict)
 
     def update(self, rows: list[dict[str, Any]], now: datetime | None = None) -> list[dict[str, Any]]:
         now = now or datetime.now(timezone.utc)
+        hour_end = now.replace(minute=0, second=0, microsecond=0)
+        hour_start = hour_end - timedelta(hours=1)
+        session = f"{hour_start:%H:%M}–{hour_end:%H:%M} UTC"
         result = []
         for row in rows:
             wallet = row["wallet"] or row["username"]
@@ -100,19 +104,22 @@ class SpeedTracker:
             # Cade's daily counter can reset; discard an invalid backwards sample.
             if history and row["predictions"] < history[-1][1]:
                 history.clear()
-            if not history or history[-1][1] != row["predictions"]:
-                history.append((now, row["predictions"]))
+                self.hour_anchors[wallet].clear()
+            history.append((now, row["predictions"]))
             cutoff = now - self.window
-            while len(history) > 1 and history[1][0] < cutoff:
+            while len(history) > 2 and history[1][0] < cutoff:
                 history.popleft()
-            if len(history) >= 2:
-                first_time, first_count = history[0]
-                elapsed_hours = max((now - first_time).total_seconds() / 3600, 1 / 3600)
-                speed = max(0.0, (row["predictions"] - first_count) / elapsed_hours)
-            else:
-                speed = 0.0
+            anchors = self.hour_anchors[wallet]
+            anchors.setdefault(hour_end, row["predictions"])
+            anchors.setdefault(hour_start, next((count for timestamp, count in history if timestamp >= hour_start), row["predictions"]))
+            hourly_trades = max(0, anchors[hour_end] - anchors[hour_start]) if hour_start in anchors else 0
+            for boundary in list(anchors):
+                if boundary < now - self.window:
+                    del anchors[boundary]
             enriched = dict(row)
-            enriched["trades_per_hour"] = speed
+            enriched["trades_per_hour"] = hourly_trades
+            enriched["hourly_trades"] = hourly_trades
+            enriched["hourly_session"] = session
             result.append(enriched)
         return result
 
@@ -202,11 +209,12 @@ def format_message(rows: list[dict[str, Any]], now: datetime | None = None, rese
     generated = (now or datetime.now(timezone.utc)).strftime("%Y-%m-%d %H:%M:%S UTC")
     total_predictions = sum(row.get("predictions", 0) for row in rows)
     cycle = period_date or "Cade current 24h cycle"
-    lines = ["📊 <b>Cade top traders — predictions</b>", f"Cade cycle {cycle} • checked {generated}", f"Top {len(rows)} combined predictions: <b>{total_predictions:,}</b>", "Trades/hour = speed measured from samples in the previous 3 hours.", f"Cade cycle resets in <b>{countdown(now, reset_at)}</b>", ""]
+    session = rows[0].get("hourly_session", "completed UTC hour") if rows else "completed UTC hour"
+    lines = ["📊 <b>Cade top traders — predictions</b>", f"Cade cycle {cycle} • checked {generated}", f"Top {len(rows)} combined predictions: <b>{total_predictions:,}</b>", f"Trades completed last hour ({session}); speed is the exact counter delta for that UTC session.", f"Cade cycle resets in <b>{countdown(now, reset_at)}</b>", ""]
     for row in rows:
         name = row["username"].replace("<", "&lt;").replace(">", "&gt;")
-        speed = row.get("trades_per_hour", 0.0)
-        lines.append(f"<b>{row['rank']}.</b> {name} — <b>{row['predictions']}</b> predictions — <b>{speed:.2f}/hr</b>")
+        hourly_trades = row.get("hourly_trades", row.get("trades_per_hour", 0))
+        lines.append(f"<b>{row['rank']}.</b> {name} — <b>{row['predictions']}</b> predictions — <b>{hourly_trades:,}</b> trades last hour")
     return "\n".join(lines)
 
 

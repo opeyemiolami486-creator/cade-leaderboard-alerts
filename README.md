@@ -4,15 +4,13 @@ A Railway-ready Python service that polls Cade’s public leaderboard every 15 s
 
 ## What the alert shows
 
-Each alert contains the trader’s rank, total predictions in Cade’s current 24-hour leaderboard, and **trades/hour**. Trades/hour is calculated from the change in `prediction_count` over samples collected during the **previous three hours**:
+Each alert contains the trader’s rank, total predictions in Cade’s current 24-hour leaderboard, and the exact number of trades completed during the most recently completed UTC clock hour. For example, an alert at 02:05 UTC reports the counter delta for `01:00–02:00 UTC`:
 
 ```text
-trades_per_hour = new_prediction_count - old_prediction_count
-                   -----------------------------------------
-                         elapsed_hours
+trades_last_hour = prediction_count_at_02:00 - prediction_count_at_01:00
 ```
 
-The first sample for a trader shows `0.00/hr` because there is not yet enough history. The tracker is in memory, so its three-hour history starts over after a Railway redeploy. If Cade’s daily counter goes backward at reset, the tracker safely starts a new history window.
+The alert labels the session explicitly, for example `01:00–02:00 UTC: 2,000 trades`. A session is shown as `0` until the service has observed both sides of that hour boundary. The tracker is in memory, so session anchors start over after a Railway redeploy. If Cade’s daily counter goes backward at reset, the tracker safely starts a new history window.
 
 ## Verified Cade contract
 
@@ -28,7 +26,7 @@ Cade’s `period=24h&sort=predictions` response is the official Meme Madness cyc
 
 - `/alerts` enables alerts for the chat and immediately sends a snapshot.
 - `/stop` or `/alertsoff` disables alerts for the chat.
-- `/status` reports alert state, polling interval, and the three-hour speed window.
+- `/status` reports alert state, polling interval, and the completed UTC-hour speed session.
 - `/copyplan 1000` analyzes the current top-10 traders' settled prediction history from the previous four days and returns the most profitable tracked trader's recent trades plus a manual sizing plan for a 1000-unit available balance.
 - `/copytrade xxx 1000` fetches username `xxx` from the current top-10 leaderboard, shows that trader's recent trades, and returns a manual sizing plan based on a 1000-unit available balance. The username may also be written as `@xxx`.
 
