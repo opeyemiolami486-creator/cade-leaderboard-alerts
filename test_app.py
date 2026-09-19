@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app import SpeedTracker, build_copy_plan, countdown, find_trader, format_message, leaderboard_url, normalize, reset_from_cursor, snapshot_key
+from app import SpeedTracker, build_copy_plan, countdown, find_trader, format_message, leaderboard_url, normalize, raw_to_credits, reset_from_cursor, snapshot_key
 
 
 def test_leaderboard_url_requests_prediction_count_sort():
@@ -47,10 +47,16 @@ def test_trailing_one_hour_count_uses_exact_completed_window():
     assert measured["trades_per_hour"] == 200
     assert measured["hourly_trades"] == 200
     assert measured["hourly_session"] == "12:00:00–13:00:00 UTC"
+    assert measured["average_trades_per_hour"] == pytest.approx(200)
     row = {**row, "predictions": 250}
     measured = tracker.update([row], start + timedelta(hours=1, minutes=30))[0]
     assert measured["hourly_trades"] == 140
     assert measured["hourly_session"] == "12:30:00–13:30:00 UTC"
+    assert measured["average_trades_per_hour"] == pytest.approx(160)
+
+
+def test_raw_credit_values_are_displayed_as_credits():
+    assert raw_to_credits("7760000") == pytest.approx(7.76)
 
 
 def test_speed_resets_when_cade_daily_counter_goes_backwards():

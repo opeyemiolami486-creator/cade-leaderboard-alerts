@@ -26,6 +26,7 @@ REQUEST_TIMEOUT = float(os.getenv("REQUEST_TIMEOUT_SECONDS", "20"))
 TELEGRAM_POLL_SECONDS = 20
 TELEGRAM_READ_TIMEOUT_SECONDS = 35
 SPEED_WINDOW_HOURS = 1.0
+RAW_CREDITS_PER_UNIT = 1_000_000
 COPY_LOOKBACK_DAYS = 4
 COPY_TRADE_PCT = max(0.1, min(5.0, float(os.getenv("COPY_TRADE_PCT", "1"))))
 MAX_TOTAL_COPY_PCT = max(COPY_TRADE_PCT, min(25.0, float(os.getenv("MAX_TOTAL_COPY_PCT", "10"))))
@@ -90,6 +91,7 @@ class SpeedTracker:
     def __init__(self, window_hours: float = 2.0):
         self.window = timedelta(hours=window_hours)
         self.samples: dict[str, deque[tuple[datetime, int]]] = defaultdict(deque)
+        self.average_start: dict[str, tuple[datetime, int]] = {}
 
     def update(self, rows: list[dict[str, Any]], now: datetime | None = None) -> list[dict[str, Any]]:
         now = now or datetime.now(timezone.utc)
@@ -102,16 +104,22 @@ class SpeedTracker:
             # Cade's daily counter can reset; discard an invalid backwards sample.
             if history and row["predictions"] < history[-1][1]:
                 history.clear()
+                self.average_start.pop(wallet, None)
+            self.average_start.setdefault(wallet, (now, row["predictions"]))
             history.append((now, row["predictions"]))
             cutoff = now - self.window
             while len(history) > 2 and history[1][0] < cutoff:
                 history.popleft()
             baseline = next((count for timestamp, count in reversed(history) if timestamp <= window_start), None)
             hourly_trades = max(0, row["predictions"] - baseline) if baseline is not None else 0
+            average_start_time, average_start_count = self.average_start[wallet]
+            elapsed_hours = (now - average_start_time).total_seconds() / 3600
+            average_speed = max(0.0, row["predictions"] - average_start_count) / elapsed_hours if elapsed_hours >= 1 else 0.0
             enriched = dict(row)
             enriched["trades_per_hour"] = hourly_trades
             enriched["hourly_trades"] = hourly_trades
             enriched["hourly_session"] = session
+            enriched["average_trades_per_hour"] = average_speed
             result.append(enriched)
         return result
 
@@ -153,6 +161,13 @@ def realized_profit(prediction: dict[str, Any]) -> int:
         return int(prediction.get("credit_payout_raw") or 0) - int(prediction.get("net_stake_raw") or 0)
     except (TypeError, ValueError):
         return 0
+
+
+def raw_to_credits(value: int | str | None) -> float:
+    try:
+        return int(value or 0) / RAW_CREDITS_PER_UNIT
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def build_copy_plan(rows: list[dict[str, Any]], histories: dict[str, list[dict[str, Any]]], balance: float, now: datetime | None = None, min_settled_trades: int = MIN_COPY_SETTLED_TRADES, min_roi_pct: float = MIN_COPY_ROI_PCT) -> dict[str, Any]:
@@ -206,7 +221,8 @@ def format_message(rows: list[dict[str, Any]], now: datetime | None = None, rese
     for row in rows:
         name = row["username"].replace("<", "&lt;").replace(">", "&gt;")
         hourly_trades = row.get("hourly_trades", row.get("trades_per_hour", 0))
-        lines.append(f"<b>{row['rank']}.</b> {name} — <b>{row['predictions']}</b> predictions — <b>{hourly_trades:,}</b> trades last hour")
+        average_speed = row.get("average_trades_per_hour", 0.0)
+        lines.append(f"<b>{row['rank']}.</b> {name} — <b>{row['predictions']}</b> predictions — <b>{hourly_trades:,}</b> last hour — <b>{average_speed:.2f}/hr avg</b>")
     return "\n".join(lines)
 
 
@@ -224,7 +240,7 @@ def format_copy_plan(plan: dict[str, Any]) -> str:
     lines = [
         "<b>Manual copy-trade advisory — Cade</b>",
         f"Most profitable tracked trader: <b>{name}</b>",
-        f"Realized profit, last {COPY_LOOKBACK_DAYS} days: <b>{profit:,} Cade raw units</b>",
+        f"Realized profit, last {COPY_LOOKBACK_DAYS} days: <b>{raw_to_credits(profit):,.2f} credits</b>",
         f"ROI: <b>{winner.get('roi_pct', 0):.2f}%</b> • required: <b>{plan['minimum_roi_pct']:.0f}%+</b> • minimum sample: {plan['minimum_settled_trades']} settled trades",
         f"Settled trades analyzed: {len(winner['settled'])}",
         "",
@@ -240,8 +256,8 @@ def format_copy_plan(plan: dict[str, Any]) -> str:
     for trade in sorted(winner["trades"], key=lambda t: t.get("created_at", ""), reverse=True)[:10]:
         title = str(trade.get("market_title") or trade.get("description") or "Unnamed market").replace("<", "&lt;").replace(">", "&gt;")
         side = str(trade.get("side") or "unknown").upper()
-        stake = int(trade.get("net_stake_raw") or 0)
-        lines.append(f"• {side} — {stake:,} Cade raw units — {title[:100]}")
+        stake = raw_to_credits(trade.get("net_stake_raw"))
+        lines.append(f"• {side} — <b>{stake:,.2f} credits staked</b> — {title[:100]}")
     return "\n".join(lines)
 
 

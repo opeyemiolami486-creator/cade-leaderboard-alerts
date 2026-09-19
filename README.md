@@ -10,7 +10,7 @@ Each alert contains the trader’s rank, total predictions in Cade’s current 2
 trades_last_hour = prediction_count_at_02:00 - prediction_count_at_01:00
 ```
 
-The alert labels the exact session explicitly, for example `01:05:00–02:05:00 UTC: 2,000 trades`. The value is `0` until a full hour of observations is available, then it updates on every poll using the latest completed trailing hour. The tracker is in memory, so its history starts over after a Railway redeploy. If Cade’s daily counter goes backward at reset, the tracker safely starts a new history window.
+The alert labels the exact session explicitly, for example `01:05:00–02:05:00 UTC: 2,000 trades`. The value is `0` until a full hour of observations is available, then it updates on every poll using the latest completed trailing hour. It also shows `avg/hr`, calculated as the trader’s cumulative prediction-count increase divided by the number of observed hours; for 1,000 trades in one hour and 500 in the next, the average is 750/hr. The tracker is in memory, so its history starts over after a Railway redeploy. If Cade’s daily counter goes backward at reset, the tracker safely starts a new history window.
 
 ## Verified Cade contract
 
@@ -52,7 +52,7 @@ MIN_COPY_SETTLED_TRADES=10
 MIN_COPY_ROI_PCT=1000
 ```
 
-The service does **not** connect to a wallet, request private keys, submit transactions, or execute copy trading. The output is an unsubmitted manual advisory, including for `/copytrade`. Enter the balance in the same units you use when deciding your Cade stake; the percentage calculation is `balance × COPY_TRADE_PCT / 100`. Historical profitability is not a guarantee of future results.
+The service does **not** connect to a wallet, request private keys, submit transactions, or execute copy trading. The output is an unsubmitted manual advisory, including for `/copytrade`. Copy-trade history displays stake and realized-profit amounts in credits rather than Cade raw units; Cade raw values are converted using 1,000,000 raw units per credit. Enter the balance in credits; the percentage calculation is `balance × COPY_TRADE_PCT / 100`. Historical profitability is not a guarantee of future results.
 
 ## Railway environment variables
 
