@@ -18,6 +18,7 @@ logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 log = logging.getLogger("cade-alerts")
 
 CADE_URL = os.getenv("CADE_LEADERBOARD_URL", "https://cade.market/api/leaderboard?period=24h")
+CADE_LEADERBOARD_SORT = "predictions"
 POLL_SECONDS = max(15, int(os.getenv("POLL_SECONDS", "15")))
 TOP_N = max(1, min(10, int(os.getenv("TOP_N", "10"))))
 RESET_HOUR_UTC = int(os.getenv("RESET_HOUR_UTC", "0")) % 24
@@ -71,10 +72,10 @@ def normalize(payload: dict[str, Any], top_n: int = TOP_N) -> list[dict[str, Any
 
 
 def leaderboard_url(url: str = CADE_URL) -> str:
-    """Request Cade's leaderboard ranked by prediction count, not volume."""
+    """Request Cade's leaderboard ranked by number of predictions/trades, not volume."""
     parts = urlsplit(url.replace("period=day", "period=24h"))
     query = dict(parse_qsl(parts.query, keep_blank_values=True))
-    query["sort"] = "predictions"
+    query["sort"] = CADE_LEADERBOARD_SORT
     return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
 
 

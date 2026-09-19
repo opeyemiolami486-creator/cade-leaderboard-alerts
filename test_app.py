@@ -11,6 +11,7 @@ def test_leaderboard_url_requests_prediction_count_sort():
     assert leaderboard_url("https://cade.market/api/leaderboard?period=day&sort=volume") == (
         "https://cade.market/api/leaderboard?period=24h&sort=predictions"
     )
+    assert "sort=predictions" in leaderboard_url()
 
 
 def test_normalize_sorts_by_predictions_not_source_rank():
