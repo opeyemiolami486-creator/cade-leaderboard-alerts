@@ -90,6 +90,8 @@ After deploying, send any message to your bot, then send `/alerts`. The bot uses
 
 The service binds to Railway’s injected `$PORT`, exposes `/health`, and restarts on failure.
 
+The repository uses `start.sh` instead of putting `$PORT` directly in the Procfile. This matters on Railway deployments where the Procfile command can pass the literal string `$PORT` to Uvicorn. If logs show `Error: Invalid value for '--port': '$PORT' is not a valid integer`, pull the latest public GitHub commit and trigger a redeploy. After deployment, the logs should show a running Uvicorn server rather than repeated port errors.
+
 ## Local test
 
 ```bash
