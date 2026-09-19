@@ -85,18 +85,16 @@ def leaderboard_url(url: str = CADE_URL) -> str:
 
 
 class SpeedTracker:
-    """Calculate exact counts for the most recently completed UTC clock hour."""
+    """Calculate the exact counter delta over the most recent completed hour."""
 
-    def __init__(self, window_hours: float = 4.0):
+    def __init__(self, window_hours: float = 2.0):
         self.window = timedelta(hours=window_hours)
         self.samples: dict[str, deque[tuple[datetime, int]]] = defaultdict(deque)
-        self.hour_anchors: dict[str, dict[datetime, int]] = defaultdict(dict)
 
     def update(self, rows: list[dict[str, Any]], now: datetime | None = None) -> list[dict[str, Any]]:
         now = now or datetime.now(timezone.utc)
-        hour_end = now.replace(minute=0, second=0, microsecond=0)
-        hour_start = hour_end - timedelta(hours=1)
-        session = f"{hour_start:%H:%M}–{hour_end:%H:%M} UTC"
+        window_start = now - timedelta(hours=1)
+        session = f"{window_start:%H:%M:%S}–{now:%H:%M:%S} UTC"
         result = []
         for row in rows:
             wallet = row["wallet"] or row["username"]
@@ -104,18 +102,12 @@ class SpeedTracker:
             # Cade's daily counter can reset; discard an invalid backwards sample.
             if history and row["predictions"] < history[-1][1]:
                 history.clear()
-                self.hour_anchors[wallet].clear()
             history.append((now, row["predictions"]))
             cutoff = now - self.window
             while len(history) > 2 and history[1][0] < cutoff:
                 history.popleft()
-            anchors = self.hour_anchors[wallet]
-            anchors.setdefault(hour_end, row["predictions"])
-            anchors.setdefault(hour_start, next((count for timestamp, count in history if timestamp >= hour_start), row["predictions"]))
-            hourly_trades = max(0, anchors[hour_end] - anchors[hour_start]) if hour_start in anchors else 0
-            for boundary in list(anchors):
-                if boundary < now - self.window:
-                    del anchors[boundary]
+            baseline = next((count for timestamp, count in reversed(history) if timestamp <= window_start), None)
+            hourly_trades = max(0, row["predictions"] - baseline) if baseline is not None else 0
             enriched = dict(row)
             enriched["trades_per_hour"] = hourly_trades
             enriched["hourly_trades"] = hourly_trades

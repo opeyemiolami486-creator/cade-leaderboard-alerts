@@ -35,7 +35,7 @@ def test_find_trader_accepts_username_or_at_username_case_insensitively():
     assert find_trader(rows, "@xxx") == rows[0]
 
 
-def test_completed_utc_hour_count_uses_counter_delta():
+def test_trailing_one_hour_count_uses_exact_completed_window():
     tracker = SpeedTracker()
     start = datetime(2026, 9, 18, 12, 0, tzinfo=timezone.utc)
     row = {"rank": 1, "username": "alpha", "wallet": "w", "predictions": 10}
@@ -46,7 +46,11 @@ def test_completed_utc_hour_count_uses_counter_delta():
     measured = tracker.update([row], start + timedelta(hours=1))[0]
     assert measured["trades_per_hour"] == 200
     assert measured["hourly_trades"] == 200
-    assert measured["hourly_session"] == "12:00–13:00 UTC"
+    assert measured["hourly_session"] == "12:00:00–13:00:00 UTC"
+    row = {**row, "predictions": 250}
+    measured = tracker.update([row], start + timedelta(hours=1, minutes=30))[0]
+    assert measured["hourly_trades"] == 140
+    assert measured["hourly_session"] == "12:30:00–13:30:00 UTC"
 
 
 def test_speed_resets_when_cade_daily_counter_goes_backwards():
@@ -65,8 +69,8 @@ def test_countdown_uses_next_utc_midnight():
 
 def test_message_contains_predictions_speed_and_reset():
     now = datetime(2026, 9, 18, 23, 59, 50, tzinfo=timezone.utc)
-    text = format_message([{"rank": 1, "username": "alpha", "predictions": 12, "hourly_trades": 2000, "hourly_session": "22:00–23:00 UTC"}], now)
-    assert "alpha" in text and "12" in text and "2,000" in text and "22:00–23:00 UTC" in text and "00:00:10" in text
+    text = format_message([{"rank": 1, "username": "alpha", "predictions": 12, "hourly_trades": 2000, "hourly_session": "22:59:50–23:59:50 UTC"}], now)
+    assert "alpha" in text and "12" in text and "2,000" in text and "22:59:50–23:59:50 UTC" in text and "00:00:10" in text
 
 
 def test_message_contains_combined_top_ten_predictions():
