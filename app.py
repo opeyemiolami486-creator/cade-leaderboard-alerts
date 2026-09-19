@@ -9,6 +9,7 @@ from collections import defaultdict, deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import httpx
 from fastapi import FastAPI
@@ -67,6 +68,14 @@ def normalize(payload: dict[str, Any], top_n: int = TOP_N) -> list[dict[str, Any
     for index, row in enumerate(rows[:top_n], 1):
         row["rank"] = index
     return rows[:top_n]
+
+
+def leaderboard_url(url: str = CADE_URL) -> str:
+    """Request Cade's leaderboard ranked by prediction count, not volume."""
+    parts = urlsplit(url.replace("period=day", "period=24h"))
+    query = dict(parse_qsl(parts.query, keep_blank_values=True))
+    query["sort"] = "predictions"
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
 
 
 class SpeedTracker:
@@ -244,7 +253,7 @@ class CadeClient:
         self.period_date: str | None = None
 
     async def leaderboard(self) -> list[dict[str, Any]]:
-        url = CADE_URL.replace("period=day", "period=24h")
+        url = leaderboard_url()
         response = await self.client.get(url)
         response.raise_for_status()
         payload = response.json()

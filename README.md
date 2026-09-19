@@ -19,10 +19,10 @@ The first sample for a trader shows `0.00/hr` because there is not yet enough hi
 The service uses:
 
 ```text
-GET https://cade.market/api/leaderboard?period=24h
+GET https://cade.market/api/leaderboard?period=24h&sort=predictions
 ```
 
-Cade’s `period=24h` response is the official Meme Madness cycle and includes an opaque `next_cursor` containing the cycle end timestamp. The service decodes that timestamp, so its reset countdown matches Cade’s live battle countdown rather than using UTC midnight. Each alert also shows the combined `prediction_count` for the displayed top 10 traders in the current Cade cycle.
+Cade’s `period=24h&sort=predictions` response is the official Meme Madness cycle ranked by prediction count. This explicit sort is required because Cade’s default leaderboard is volume-ranked. The response includes an opaque `next_cursor` containing the cycle end timestamp. The service decodes that timestamp, so its reset countdown matches Cade’s live battle countdown rather than using UTC midnight. Each alert also shows the combined `prediction_count` for the displayed top 10 traders in the current Cade cycle.
 
 ## Telegram commands
 
@@ -64,7 +64,7 @@ Set these in **Railway → your service → Variables**:
 | `TELEGRAM_BOT_TOKEN` | Yes | Token from `@BotFather` | Lets the service read commands and send messages |
 | `POLL_SECONDS` | No | `15` | Poll interval; values below 15 are clamped to 15 |
 | `TOP_N` | No | `10` | Number of traders, clamped to 1–10 |
-| `CADE_LEADERBOARD_URL` | No | `https://cade.market/api/leaderboard?period=day` | Cade endpoint; leave default unless it changes |
+| `CADE_LEADERBOARD_URL` | No | `https://cade.market/api/leaderboard?period=day` | Cade endpoint; the service forces `period=24h&sort=predictions` |
 | `RESET_HOUR_UTC` | No | `0` | Countdown reset hour in UTC; `0` means midnight UTC |
 | `REQUEST_TIMEOUT_SECONDS` | No | `10` | HTTP timeout for Cade and Telegram requests |
 | `COPY_TRADE_PCT` | No | `1` | Suggested percentage of available balance per copied trade; clamped to 0.1–5% |

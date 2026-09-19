@@ -4,7 +4,13 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app import SpeedTracker, build_copy_plan, countdown, format_message, normalize, reset_from_cursor, snapshot_key
+from app import SpeedTracker, build_copy_plan, countdown, format_message, leaderboard_url, normalize, reset_from_cursor, snapshot_key
+
+
+def test_leaderboard_url_requests_prediction_count_sort():
+    assert leaderboard_url("https://cade.market/api/leaderboard?period=day&sort=volume") == (
+        "https://cade.market/api/leaderboard?period=24h&sort=predictions"
+    )
 
 
 def test_normalize_sorts_by_predictions_not_source_rank():
