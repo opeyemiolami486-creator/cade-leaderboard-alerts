@@ -19,10 +19,10 @@ The first sample for a trader shows `0.00/hr` because there is not yet enough hi
 The service uses:
 
 ```text
-GET https://cade.market/api/leaderboard?period=day
+GET https://cade.market/api/leaderboard?period=24h
 ```
 
-Cade currently returns `period: "24h"`, so “daily” follows Cade’s live 24-hour leaderboard/countdown rather than assuming a local calendar day. The service displays the time remaining to the next UTC midnight; change `RESET_HOUR_UTC` if Cade’s reset boundary differs.
+Cade’s `period=24h` response is the official Meme Madness cycle and includes an opaque `next_cursor` containing the cycle end timestamp. The service decodes that timestamp, so its reset countdown matches Cade’s live battle countdown rather than using UTC midnight. Each alert also shows the combined `prediction_count` for the displayed top 10 traders in the current Cade cycle.
 
 ## Telegram commands
 

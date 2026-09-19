@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -15,7 +16,7 @@ from fastapi import FastAPI
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 log = logging.getLogger("cade-alerts")
 
-CADE_URL = os.getenv("CADE_LEADERBOARD_URL", "https://cade.market/api/leaderboard?period=day")
+CADE_URL = os.getenv("CADE_LEADERBOARD_URL", "https://cade.market/api/leaderboard?period=24h")
 POLL_SECONDS = max(15, int(os.getenv("POLL_SECONDS", "15")))
 TOP_N = max(1, min(10, int(os.getenv("TOP_N", "10"))))
 RESET_HOUR_UTC = int(os.getenv("RESET_HOUR_UTC", "0")) % 24
@@ -31,10 +32,14 @@ MIN_COPY_SETTLED_TRADES = max(1, int(os.getenv("MIN_COPY_SETTLED_TRADES", "10"))
 MIN_COPY_ROI_PCT = max(0.0, float(os.getenv("MIN_COPY_ROI_PCT", "1000")))
 
 
-def countdown(now: datetime | None = None) -> str:
+def countdown(now: datetime | None = None, reset_at: datetime | None = None) -> str:
     now = now or datetime.now(timezone.utc)
-    boundary = now.replace(hour=RESET_HOUR_UTC, minute=0, second=0, microsecond=0)
-    if boundary <= now:
+    boundary = reset_at
+    if boundary is None:
+        boundary = now.replace(hour=RESET_HOUR_UTC, minute=0, second=0, microsecond=0)
+        if boundary <= now:
+            boundary += timedelta(days=1)
+    elif boundary <= now:
         boundary += timedelta(days=1)
     seconds = int((boundary - now).total_seconds())
     h, rem = divmod(seconds, 3600)
@@ -110,6 +115,22 @@ def parse_timestamp(value: str | None) -> datetime | None:
         return None
 
 
+def reset_from_cursor(cursor: str | None) -> datetime | None:
+    """Cade encodes the current cycle start/end timestamps in next_cursor."""
+    if not cursor:
+        return None
+    try:
+        decoded = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)).decode()
+        schedule = json.loads(decoded).get("schedule", "").split("|")
+        for value in reversed(schedule):
+            parsed = parse_timestamp(value)
+            if parsed and parsed > datetime.now(timezone.utc):
+                return parsed
+    except (ValueError, TypeError, KeyError, json.JSONDecodeError, UnicodeDecodeError):
+        log.warning("could not decode Cade cycle cursor")
+    return None
+
+
 def realized_profit(prediction: dict[str, Any]) -> int:
     """Return realized profit in Cade's smallest credit units; unresolved trades are zero."""
     if prediction.get("lifecycle_state") not in {"settled", "resolved"}:
@@ -162,9 +183,11 @@ def build_copy_plan(rows: list[dict[str, Any]], histories: dict[str, list[dict[s
     return plan
 
 
-def format_message(rows: list[dict[str, Any]], now: datetime | None = None) -> str:
+def format_message(rows: list[dict[str, Any]], now: datetime | None = None, reset_at: datetime | None = None, period_date: str | None = None) -> str:
     generated = (now or datetime.now(timezone.utc)).strftime("%Y-%m-%d %H:%M:%S UTC")
-    lines = ["📊 <b>Cade top traders — predictions</b>", f"24h window • checked {generated}", "Trades/hour = speed measured from samples in the previous 3 hours.", f"Next daily reset in <b>{countdown(now)}</b>", ""]
+    total_predictions = sum(row.get("predictions", 0) for row in rows)
+    cycle = period_date or "Cade current 24h cycle"
+    lines = ["📊 <b>Cade top traders — predictions</b>", f"Cade cycle {cycle} • checked {generated}", f"Top {len(rows)} combined predictions: <b>{total_predictions:,}</b>", "Trades/hour = speed measured from samples in the previous 3 hours.", f"Cade cycle resets in <b>{countdown(now, reset_at)}</b>", ""]
     for row in rows:
         name = row["username"].replace("<", "&lt;").replace(">", "&gt;")
         speed = row.get("trades_per_hour", 0.0)
@@ -217,11 +240,17 @@ class State:
 class CadeClient:
     def __init__(self, client: httpx.AsyncClient):
         self.client = client
+        self.reset_at: datetime | None = None
+        self.period_date: str | None = None
 
     async def leaderboard(self) -> list[dict[str, Any]]:
-        response = await self.client.get(CADE_URL)
+        url = CADE_URL.replace("period=day", "period=24h")
+        response = await self.client.get(url)
         response.raise_for_status()
-        return normalize(response.json())
+        payload = response.json()
+        self.period_date = payload.get("date")
+        self.reset_at = reset_from_cursor(payload.get("next_cursor"))
+        return normalize(payload)
 
     async def prediction_history(self, wallet: str) -> list[dict[str, Any]]:
         predictions = []
@@ -307,7 +336,7 @@ async def run_bot() -> None:
                         state.alerts[chat_id] = True
                         rows = speed_tracker.update(await cade.leaderboard())
                         state.last_key[chat_id] = snapshot_key(rows)
-                        await telegram.send(chat_id, format_message(rows))
+                        await telegram.send(chat_id, format_message(rows, reset_at=cade.reset_at, period_date=cade.period_date))
                     elif command == "/copyplan":
                         parts = (message.get("text") or "").strip().split()
                         if len(parts) != 2:
@@ -336,7 +365,7 @@ async def run_bot() -> None:
                 key = snapshot_key(rows)
                 for chat_id, enabled in list(state.alerts.items()):
                     if enabled and state.last_key.get(chat_id) != key:
-                        await telegram.send(chat_id, format_message(rows))
+                        await telegram.send(chat_id, format_message(rows, reset_at=cade.reset_at, period_date=cade.period_date))
                         state.last_key[chat_id] = key
             except asyncio.CancelledError:
                 raise

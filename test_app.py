@@ -1,8 +1,10 @@
+import base64
+import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app import SpeedTracker, build_copy_plan, countdown, format_message, normalize, snapshot_key
+from app import SpeedTracker, build_copy_plan, countdown, format_message, normalize, reset_from_cursor, snapshot_key
 
 
 def test_normalize_sorts_by_predictions_not_source_rank():
@@ -48,6 +50,21 @@ def test_message_contains_predictions_speed_and_reset():
     now = datetime(2026, 9, 18, 23, 59, 50, tzinfo=timezone.utc)
     text = format_message([{"rank": 1, "username": "alpha", "predictions": 12, "trades_per_hour": 4.25}], now)
     assert "alpha" in text and "12" in text and "4.25/hr" in text and "00:00:10" in text
+
+
+def test_message_contains_combined_top_ten_predictions():
+    text = format_message([
+        {"rank": 1, "username": "alpha", "predictions": 12, "trades_per_hour": 0},
+        {"rank": 2, "username": "beta", "predictions": 8, "trades_per_hour": 0},
+    ])
+    assert "Top 2 combined predictions: <b>20</b>" in text
+
+
+def test_reset_from_cade_cursor_uses_cycle_end():
+    end = "2099-09-19T07:34:52.971587Z"
+    payload = {"schedule": "schedule|cycle-03|2099-09-18T07:34:52.971587Z|" + end + "|33"}
+    cursor = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
+    assert reset_from_cursor(cursor).isoformat().startswith("2099-09-19T07:34:52")
 
 
 def test_snapshot_key_is_stable_and_changes_on_prediction_count():
