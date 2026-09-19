@@ -67,7 +67,7 @@ def test_copy_plan_selects_highest_four_day_realized_profit_and_sizes_manually()
         "a": [{"created_at": "2026-09-18T12:00:00Z", "lifecycle_state": "resolved", "credit_payout_raw": "150", "net_stake_raw": "100"}],
         "b": [{"created_at": "2026-09-18T12:00:00Z", "lifecycle_state": "resolved", "credit_payout_raw": "300", "net_stake_raw": "100"}],
     }
-    plan = build_copy_plan(rows, histories, 1000, now)
+    plan = build_copy_plan(rows, histories, 1000, now, min_settled_trades=1)
     assert plan["winner"]["row"]["username"] == "beta"
     assert plan["per_trade_amount"] == pytest.approx(10)
     assert plan["max_total_amount"] == pytest.approx(100)
