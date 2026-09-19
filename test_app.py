@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app import SpeedTracker, build_copy_plan, countdown, find_trader, format_message, leaderboard_url, normalize, raw_to_credits, reset_from_cursor, snapshot_key
+from app import SpeedTracker, build_copy_plan, countdown, find_trader, format_copy_plan, format_message, leaderboard_url, normalize, raw_to_credits, reset_from_cursor, snapshot_key
 
 
 def test_leaderboard_url_requests_prediction_count_sort():
@@ -57,6 +57,20 @@ def test_trailing_one_hour_count_uses_exact_completed_window():
 
 def test_raw_credit_values_are_displayed_as_credits():
     assert raw_to_credits("7760000") == pytest.approx(7.76)
+
+
+def test_copy_plan_shows_stake_as_percentage_of_trader_portfolio():
+    now = datetime(2026, 9, 19, 12, 0, tzinfo=timezone.utc)
+    plan = build_copy_plan(
+        [{"rank": 1, "username": "alpha", "wallet": "a", "predictions": 20}],
+        {"a": [{"created_at": "2026-09-18T12:00:00Z", "lifecycle_state": "resolved", "credit_payout_raw": "2000000000", "net_stake_raw": "1000000000"}]},
+        1000,
+        now,
+        min_settled_trades=1,
+        min_roi_pct=0,
+        trader_portfolio=100000,
+    )
+    assert "1.00% of portfolio" in format_copy_plan(plan)
 
 
 def test_speed_resets_when_cade_daily_counter_goes_backwards():

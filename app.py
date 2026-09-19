@@ -170,7 +170,7 @@ def raw_to_credits(value: int | str | None) -> float:
         return 0.0
 
 
-def build_copy_plan(rows: list[dict[str, Any]], histories: dict[str, list[dict[str, Any]]], balance: float, now: datetime | None = None, min_settled_trades: int = MIN_COPY_SETTLED_TRADES, min_roi_pct: float = MIN_COPY_ROI_PCT) -> dict[str, Any]:
+def build_copy_plan(rows: list[dict[str, Any]], histories: dict[str, list[dict[str, Any]]], balance: float, now: datetime | None = None, min_settled_trades: int = MIN_COPY_SETTLED_TRADES, min_roi_pct: float = MIN_COPY_ROI_PCT, trader_portfolio: float | None = None) -> dict[str, Any]:
     now = now or datetime.now(timezone.utc)
     cutoff = now - timedelta(days=COPY_LOOKBACK_DAYS)
     candidates = []
@@ -208,6 +208,7 @@ def build_copy_plan(rows: list[dict[str, Any]], histories: dict[str, list[dict[s
         "minimum_roi_pct": min_roi_pct,
         "winner": winner,
         "as_of": now,
+        "trader_portfolio": trader_portfolio,
     }
     return plan
 
@@ -257,7 +258,9 @@ def format_copy_plan(plan: dict[str, Any]) -> str:
         title = str(trade.get("market_title") or trade.get("description") or "Unnamed market").replace("<", "&lt;").replace(">", "&gt;")
         side = str(trade.get("side") or "unknown").upper()
         stake = raw_to_credits(trade.get("net_stake_raw"))
-        lines.append(f"• {side} — <b>{stake:,.2f} credits staked</b> — {title[:100]}")
+        portfolio = plan.get("trader_portfolio")
+        percentage = f" ({100 * stake / portfolio:.2f}% of portfolio)" if portfolio and portfolio > 0 else " (portfolio balance not supplied)"
+        lines.append(f"• {side} — <b>{stake:,.2f} credits staked</b>{percentage} — {title[:100]}")
     return "\n".join(lines)
 
 
@@ -372,8 +375,9 @@ async def run_bot() -> None:
                         parts = (message.get("text") or "").strip().split()
                         manual_username = parts[1] if command == "/copytrade" and len(parts) >= 2 else None
                         balance_arg = parts[2] if manual_username and len(parts) >= 3 else (parts[1] if not manual_username and len(parts) >= 2 else None)
-                        if balance_arg is None or len(parts) != (3 if manual_username else 2):
-                            usage = "/copytrade xxx 1000\nOr use /copyplan 1000 for the automatically selected eligible trader."
+                        portfolio_arg = parts[3] if manual_username and len(parts) == 4 else None
+                        if balance_arg is None or len(parts) not in ((3, 4) if manual_username else (2,)):
+                            usage = "/copytrade xxx 1000 100000\nThe last value is optional: the selected trader's portfolio balance.\nOr use /copyplan 1000 for automatic selection."
                             await telegram.send(chat_id, usage)
                             continue
                         try:
@@ -383,6 +387,15 @@ async def run_bot() -> None:
                         except ValueError:
                             await telegram.send(chat_id, "Balance must be a positive number. Example: /copytrade xxx 1000")
                             continue
+                        trader_portfolio = None
+                        if portfolio_arg is not None:
+                            try:
+                                trader_portfolio = float(portfolio_arg)
+                                if trader_portfolio <= 0:
+                                    raise ValueError
+                            except ValueError:
+                                await telegram.send(chat_id, "Trader portfolio must be a positive number. Example: /copytrade xxx 1000 100000")
+                                continue
                         rows = await cade.leaderboard()
                         if manual_username:
                             selected = find_trader(rows, manual_username)
@@ -390,7 +403,7 @@ async def run_bot() -> None:
                                 await telegram.send(chat_id, f"I could not find @{manual_username.lstrip('@')} in the current top-10 leaderboard. Use /alerts to see the current names.")
                                 continue
                             history = await cade.prediction_history(selected["wallet"])
-                            plan = build_copy_plan([selected], {selected["wallet"]: history}, balance, min_settled_trades=1, min_roi_pct=0)
+                            plan = build_copy_plan([selected], {selected["wallet"]: history}, balance, min_settled_trades=1, min_roi_pct=0, trader_portfolio=trader_portfolio)
                         else:
                             history_batches = await asyncio.gather(*(cade.prediction_history(row["wallet"]) for row in rows), return_exceptions=True)
                             histories = {row["wallet"]: batch for row, batch in zip(rows, history_batches) if isinstance(batch, list)}

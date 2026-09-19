@@ -28,7 +28,7 @@ Cade’s `period=24h&sort=predictions` response is the official Meme Madness cyc
 - `/stop` or `/alertsoff` disables alerts for the chat.
 - `/status` reports alert state, polling interval, and the trailing one-hour speed session.
 - `/copyplan 1000` analyzes the current top-10 traders' settled prediction history from the previous four days and returns the most profitable tracked trader's recent trades plus a manual sizing plan for a 1000-unit available balance.
-- `/copytrade xxx 1000` fetches username `xxx` from the current top-10 leaderboard, shows that trader's recent trades, and returns a manual sizing plan based on a 1000-unit available balance. The username may also be written as `@xxx`.
+- `/copytrade xxx 1000 100000` fetches username `xxx`, shows that trader's recent trades, and returns a manual sizing plan. The values mean your available balance (`1000`) and, optionally, the selected trader's portfolio (`100000`), so each trade is shown as a percentage of that portfolio. The username may also be written as `@xxx`; omit the final portfolio value when it is unknown.
 
 The service only sends another message when the ranked top-10 snapshot changes, avoiding duplicate Telegram spam every 15 seconds.
 
@@ -52,7 +52,7 @@ MIN_COPY_SETTLED_TRADES=10
 MIN_COPY_ROI_PCT=1000
 ```
 
-The service does **not** connect to a wallet, request private keys, submit transactions, or execute copy trading. The output is an unsubmitted manual advisory, including for `/copytrade`. Copy-trade history displays stake and realized-profit amounts in credits rather than Cade raw units; Cade raw values are converted using 1,000,000 raw units per credit. Enter the balance in credits; the percentage calculation is `balance × COPY_TRADE_PCT / 100`. Historical profitability is not a guarantee of future results.
+The service does **not** connect to a wallet, request private keys, submit transactions, or execute copy trading. The output is an unsubmitted manual advisory, including for `/copytrade`. Copy-trade history displays stake and realized-profit amounts in credits rather than Cade raw units; Cade raw values are converted using 1,000,000 raw units per credit. When the selected trader's portfolio is supplied, each trade shows `stake ÷ trader portfolio × 100`; otherwise it explicitly says that the portfolio balance was not supplied. Enter balances in credits. Historical profitability is not a guarantee of future results.
 
 ## Railway environment variables
 
