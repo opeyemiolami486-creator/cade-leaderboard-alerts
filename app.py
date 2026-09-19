@@ -71,6 +71,11 @@ def normalize(payload: dict[str, Any], top_n: int = TOP_N) -> list[dict[str, Any
     return rows[:top_n]
 
 
+def find_trader(rows: list[dict[str, Any]], username: str) -> dict[str, Any] | None:
+    wanted = username.lstrip("@").casefold()
+    return next((row for row in rows if row["username"].casefold() == wanted), None)
+
+
 def leaderboard_url(url: str = CADE_URL) -> str:
     """Request Cade's leaderboard ranked by number of predictions/trades, not volume."""
     parts = urlsplit(url.replace("period=day", "period=24h"))
@@ -347,24 +352,35 @@ async def run_bot() -> None:
                         rows = speed_tracker.update(await cade.leaderboard())
                         state.last_key[chat_id] = snapshot_key(rows)
                         await telegram.send(chat_id, format_message(rows, reset_at=cade.reset_at, period_date=cade.period_date))
-                    elif command == "/copyplan":
+                    elif command in ("/copyplan", "/copytrade"):
                         parts = (message.get("text") or "").strip().split()
-                        if len(parts) != 2:
-                            await telegram.send(chat_id, "Usage: /copyplan 1000\nReplace 1000 with your available balance in Cade credits.")
+                        manual_username = parts[1] if command == "/copytrade" and len(parts) >= 2 else None
+                        balance_arg = parts[2] if manual_username and len(parts) >= 3 else (parts[1] if not manual_username and len(parts) >= 2 else None)
+                        if balance_arg is None or len(parts) != (3 if manual_username else 2):
+                            usage = "/copytrade xxx 1000\nOr use /copyplan 1000 for the automatically selected eligible trader."
+                            await telegram.send(chat_id, usage)
                             continue
                         try:
-                            balance = float(parts[1])
+                            balance = float(balance_arg)
                             if balance <= 0:
                                 raise ValueError
                         except ValueError:
-                            await telegram.send(chat_id, "Balance must be a positive number. Example: /copyplan 1000")
+                            await telegram.send(chat_id, "Balance must be a positive number. Example: /copytrade xxx 1000")
                             continue
                         rows = await cade.leaderboard()
-                        history_batches = await asyncio.gather(*(cade.prediction_history(row["wallet"]) for row in rows), return_exceptions=True)
-                        histories = {row["wallet"]: batch for row, batch in zip(rows, history_batches) if isinstance(batch, list)}
-                        if len(histories) != len(rows):
-                            log.warning("copyplan history incomplete: %s/%s wallets", len(histories), len(rows))
-                        plan = build_copy_plan(rows, histories, balance)
+                        if manual_username:
+                            selected = find_trader(rows, manual_username)
+                            if not selected:
+                                await telegram.send(chat_id, f"I could not find @{manual_username.lstrip('@')} in the current top-10 leaderboard. Use /alerts to see the current names.")
+                                continue
+                            history = await cade.prediction_history(selected["wallet"])
+                            plan = build_copy_plan([selected], {selected["wallet"]: history}, balance, min_settled_trades=1, min_roi_pct=0)
+                        else:
+                            history_batches = await asyncio.gather(*(cade.prediction_history(row["wallet"]) for row in rows), return_exceptions=True)
+                            histories = {row["wallet"]: batch for row, batch in zip(rows, history_batches) if isinstance(batch, list)}
+                            if len(histories) != len(rows):
+                                log.warning("copyplan history incomplete: %s/%s wallets", len(histories), len(rows))
+                            plan = build_copy_plan(rows, histories, balance)
                         await telegram.send(chat_id, format_copy_plan(plan))
                     elif command in ("/stop", "/alertsoff"):
                         state.alerts[chat_id] = False

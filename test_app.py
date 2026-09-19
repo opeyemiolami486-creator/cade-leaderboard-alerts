@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app import SpeedTracker, build_copy_plan, countdown, format_message, leaderboard_url, normalize, reset_from_cursor, snapshot_key
+from app import SpeedTracker, build_copy_plan, countdown, find_trader, format_message, leaderboard_url, normalize, reset_from_cursor, snapshot_key
 
 
 def test_leaderboard_url_requests_prediction_count_sort():
@@ -27,6 +27,12 @@ def test_normalize_sorts_by_predictions_not_source_rank():
 def test_normalize_rejects_missing_entries():
     with pytest.raises(ValueError):
         normalize({})
+
+
+def test_find_trader_accepts_username_or_at_username_case_insensitively():
+    rows = [{"username": "xxx", "wallet": "wallet-1", "predictions": 1}]
+    assert find_trader(rows, "XXX") == rows[0]
+    assert find_trader(rows, "@xxx") == rows[0]
 
 
 def test_three_hour_speed_is_delta_divided_by_elapsed_hours():
