@@ -19,7 +19,9 @@ CADE_URL = os.getenv("CADE_LEADERBOARD_URL", "https://cade.market/api/leaderboar
 POLL_SECONDS = max(15, int(os.getenv("POLL_SECONDS", "15")))
 TOP_N = max(1, min(10, int(os.getenv("TOP_N", "10"))))
 RESET_HOUR_UTC = int(os.getenv("RESET_HOUR_UTC", "0")) % 24
-REQUEST_TIMEOUT = float(os.getenv("REQUEST_TIMEOUT_SECONDS", "10"))
+REQUEST_TIMEOUT = float(os.getenv("REQUEST_TIMEOUT_SECONDS", "20"))
+TELEGRAM_POLL_SECONDS = 20
+TELEGRAM_READ_TIMEOUT_SECONDS = 35
 SPEED_WINDOW_HOURS = 3.0
 COPY_LOOKBACK_DAYS = 4
 COPY_TRADE_PCT = max(0.1, min(5.0, float(os.getenv("COPY_TRADE_PCT", "1"))))
@@ -246,7 +248,14 @@ class TelegramClient:
         self.client, self.base = client, f"https://api.telegram.org/bot{token}"
 
     async def updates(self, offset: int) -> list[dict[str, Any]]:
-        response = await self.client.get(f"{self.base}/getUpdates", params={"timeout": 10, "offset": offset})
+        # Telegram holds getUpdates open for TELEGRAM_POLL_SECONDS. The HTTP read
+        # timeout must be longer than that server-side wait, or every idle poll
+        # becomes a false failure and commands appear unreliable.
+        response = await self.client.get(
+            f"{self.base}/getUpdates",
+            params={"timeout": TELEGRAM_POLL_SECONDS, "offset": offset},
+            timeout=TELEGRAM_READ_TIMEOUT_SECONDS,
+        )
         response.raise_for_status()
         body = response.json()
         if not body.get("ok"):
@@ -281,7 +290,8 @@ async def run_bot() -> None:
     if not token:
         log.warning("TELEGRAM_BOT_TOKEN is not set; bot loop disabled")
         return
-    async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+    timeout = httpx.Timeout(connect=REQUEST_TIMEOUT, read=TELEGRAM_READ_TIMEOUT_SECONDS, write=REQUEST_TIMEOUT, pool=REQUEST_TIMEOUT)
+    async with httpx.AsyncClient(timeout=timeout) as client:
         cade, telegram = CadeClient(client), TelegramClient(client, token)
         while True:
             try:
@@ -330,8 +340,12 @@ async def run_bot() -> None:
                         state.last_key[chat_id] = key
             except asyncio.CancelledError:
                 raise
+            except httpx.TimeoutException:
+                log.warning("network timeout during poll; retrying safely")
+            except httpx.HTTPError:
+                log.exception("HTTP error during poll; retrying safely")
             except Exception:
-                log.exception("poll cycle failed; retrying safely")
+                log.exception("unexpected poll error; retrying safely")
             await asyncio.sleep(POLL_SECONDS)
 
 

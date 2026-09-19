@@ -92,6 +92,8 @@ After deploying, send any message to your bot, then send `/alerts`. The bot uses
 
 The service binds to Railway’s injected `$PORT`, exposes `/health`, and restarts on failure.
 
+Telegram uses long polling. The bot now keeps the Telegram HTTP read timeout longer than Telegram's 20-second `getUpdates` wait, so an idle bot does not falsely report a poll failure. If commands still do not arrive after deployment, check that the bot does not have a webhook configured; Telegram does not allow `getUpdates` while a webhook is active. Remove the webhook with `https://api.telegram.org/bot<YOUR_TOKEN>/deleteWebhook` and redeploy.
+
 The repository uses `start.sh` instead of putting `$PORT` directly in the Procfile. This matters on Railway deployments where the Procfile command can pass the literal string `$PORT` to Uvicorn. If logs show `Error: Invalid value for '--port': '$PORT' is not a valid integer`, pull the latest public GitHub commit and trigger a redeploy. After deployment, the logs should show a running Uvicorn server rather than repeated port errors.
 
 ## Local test
